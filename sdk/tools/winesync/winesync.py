@@ -10,17 +10,10 @@ import pygit2
 import yaml
 
 def string_to_valid_file_name(to_convert):
-    valid_chars = '-_.()' + string.ascii_letters + string.digits
-    result = ''
-    for c in to_convert:
-        if c in valid_chars:
-            result += c
-        else:
-            result += '_'
+    valid_chars = f'-_.(){string.ascii_letters}{string.digits}'
+    result = ''.join(c if c in valid_chars else '_' for c in to_convert)
     # strip final dot, if any
-    if result.endswith('.'):
-        return result[:-1]
-    return result
+    return result[:-1] if result.endswith('.') else result
 
 class wine_sync:
     def __init__(self, module):
@@ -31,13 +24,16 @@ class wine_sync:
             self.wine_src = config['repos']['wine']
             self.wine_staging_src = config['repos']['wine-staging']
         else:
-            config = { }
             self.reactos_src = input('Please enter the path to the reactos git tree: ')
             self.wine_src = input('Please enter the path to the wine git tree: ')
             self.wine_staging_src = input('Please enter the path to the wine-staging git tree: ')
-            config['repos'] = { 'reactos' : self.reactos_src,
-                                'wine': self.wine_src,
-                                'wine-staging': self.wine_staging_src }
+            config = {
+                'repos': {
+                    'reactos': self.reactos_src,
+                    'wine': self.wine_src,
+                    'wine-staging': self.wine_staging_src,
+                }
+            }
             with open('winesync.cfg', 'w') as file_output:
                 yaml.dump(config, file_output)
 
@@ -51,13 +47,15 @@ class wine_sync:
 
         # get the actual state for the asked module
         self.module = module
-        with open(module + '.cfg', 'r') as file_input:
+        with open(f'{module}.cfg', 'r') as file_input:
             self.module_cfg = yaml.safe_load(file_input)
 
-        self.staged_patch_dir = os.path.join('sdk', 'tools', 'winesync', self.module + '_staging')
+        self.staged_patch_dir = os.path.join(
+            'sdk', 'tools', 'winesync', f'{self.module}_staging'
+        )
 
     def create_or_checkout_wine_branch(self, wine_tag, wine_staging_tag):
-        wine_branch_name = 'winesync-' + wine_tag + '-' + wine_staging_tag
+        wine_branch_name = f'winesync-{wine_tag}-{wine_staging_tag}'
         branch = self.wine_repo.lookup_branch(wine_branch_name)
         if branch is None:
             # get our target commits
@@ -79,7 +77,13 @@ class wine_sync:
             self.wine_staging_repo.reset(wine_staging_target_commit, pygit2.GIT_RESET_HARD)
 
             # run the wine-staging script
-            subprocess.call(['bash', '-c', self.wine_staging_src + '/patches/patchinstall.sh DESTDIR=' + self.wine_src + ' --all --backend=git-am'])
+            subprocess.call(
+                [
+                    'bash',
+                    '-c',
+                    f'{self.wine_staging_src}/patches/patchinstall.sh DESTDIR={self.wine_src} --all --backend=git-am',
+                ]
+            )
 
             # delete the branch we created
             self.wine_staging_repo.checkout(self.wine_staging_repo.lookup_branch('master'))
@@ -96,7 +100,7 @@ class wine_sync:
             # we have a direct mapping
             return self.module_cfg['files'][wine_path]
 
-        if not '/' in wine_path:
+        if '/' not in wine_path:
             # root files should have a direct mapping
             return None
 
@@ -129,21 +133,27 @@ class wine_sync:
             if delta.status == pygit2.GIT_DELTA_ADDED:
                 # check if we should care
                 new_reactos_path = self.wine_to_reactos_path(delta.new_file.path)
-                if not new_reactos_path is None:
-                    warning_message += 'file ' + delta.new_file.path + ' is added to the wine tree !\n'
+                if new_reactos_path is not None:
+                    warning_message += (
+                        f'file {delta.new_file.path}'
+                        + ' is added to the wine tree !\n'
+                    )
                     old_reactos_path = '/dev/null'
                 else:
                     old_reactos_path = None
             elif delta.status == pygit2.GIT_DELTA_DELETED:
                 # check if we should care
                 old_reactos_path = self.wine_to_reactos_path(delta.old_file.path)
-                if not old_reactos_path is None:
-                    warning_message += 'file ' + delta.old_file.path + ' is removed from the wine tree !\n'
+                if old_reactos_path is not None:
+                    warning_message += (
+                        f'file {delta.old_file.path}'
+                        + ' is removed from the wine tree !\n'
+                    )
                     new_reactos_path = '/dev/null'
                 else:
                     new_reactos_path = None
             elif delta.new_file.path.endswith('Makefile.in'):
-                warning_message += 'file ' + delta.new_file.path + ' was modified !\n'
+                warning_message += f'file {delta.new_file.path}' + ' was modified !\n'
                 # no need to warn that those are ignored, we just did.
                 continue
             else:
@@ -183,14 +193,13 @@ class wine_sync:
                 try:
                     subprocess.run(['git', '-C', self.reactos_src, 'apply', '--reject'], input=blob_patch.data, check=True)
                 except subprocess.CalledProcessError as err:
-                    warning_message += 'Error while applying patch to ' + new_reactos_path + '\n'
+                    warning_message += f'Error while applying patch to {new_reactos_path}' + '\n'
 
                 if delta.status == pygit2.GIT_DELTA_DELETED:
                     try:
                         self.reactos_index.remove(old_reactos_path)
                     except IOError as err:
-                        warning_message += 'Error while removing file ' + old_reactos_path + '\n'
-                # here we check if the file exists. We don't complain, because applying the patch already failed anyway
+                        warning_message += f'Error while removing file {old_reactos_path}' + '\n'
                 elif os.path.isfile(os.path.join(self.reactos_src, new_reactos_path)):
                     self.reactos_index.add(new_reactos_path)
 
@@ -204,14 +213,14 @@ class wine_sync:
             # We applied nothing
             return False, ''
 
-        print('Applied patches from wine commit ' + str(wine_commit.id))
+        print(f'Applied patches from wine commit {str(wine_commit.id)}')
 
         if ignored_files:
             warning_message += 'WARNING : some files were ignored: ' + ' '.join(ignored_files) + '\n'
 
         if not in_staging:
             self.module_cfg['tags']['wine'] = str(wine_commit.id)
-            with open(self.module + '.cfg', 'w') as file_output:
+            with open(f'{self.module}.cfg', 'w') as file_output:
                 yaml.dump(self.module_cfg, file_output)
             self.reactos_index.add(f'sdk/tools/winesync/{self.module}.cfg')
         else:
@@ -243,15 +252,15 @@ class wine_sync:
 
             if not in_staging:
                 warning_message += f'\n' \
-                    f'You can see the details of the wine commit here:\n' \
-                    f'    https://source.winehq.org/git/wine.git/commit/{str(wine_commit.id)}\n'
+                        f'You can see the details of the wine commit here:\n' \
+                        f'    https://source.winehq.org/git/wine.git/commit/{str(wine_commit.id)}\n'
             else:
                 warning_message += f'\n' \
-                    f'Do not forget to run\n' \
-                    f'    git diff HEAD^ \':(exclude)sdk/tools/winesync/{patch_file_name}\' > sdk/tools/winesync/{patch_file_name}\n' \
-                    f'after your correction and then\n' \
-                    f'    git add sdk/tools/winesync/{patch_file_name}\n' \
-                    f'before running "git commit --amend"'
+                        f'Do not forget to run\n' \
+                        f'    git diff HEAD^ \':(exclude)sdk/tools/winesync/{patch_file_name}\' > sdk/tools/winesync/{patch_file_name}\n' \
+                        f'after your correction and then\n' \
+                        f'    git add sdk/tools/winesync/{patch_file_name}\n' \
+                        f'before running "git commit --amend"'
 
         return True, warning_message
 
@@ -285,7 +294,7 @@ class wine_sync:
         if not has_patches:
             return True
 
-        self.reactos_index.add_all([f for f in self.module_cfg['files'].values()])
+        self.reactos_index.add_all(list(self.module_cfg['files'].values()))
         self.reactos_index.add_all([f'{d}/*.*' for d in self.module_cfg['directories'].values()])
         self.reactos_index.write()
 
@@ -348,7 +357,7 @@ class wine_sync:
         if finished_sync:
             # update wine tag and commit
             self.module_cfg['tags']['wine'] = wine_tag
-            with open(self.module + '.cfg', 'w') as file_output:
+            with open(f'{self.module}.cfg', 'w') as file_output:
                 yaml.dump(self.module_cfg, file_output)
 
             self.reactos_index.add(f'sdk/tools/winesync/{self.module}.cfg')
@@ -361,7 +370,9 @@ class wine_sync:
                 self.reactos_index.write_tree(),
                 [self.reactos_repo.head.target])
 
-            print('The branch ' + wine_branch_name + ' was created in your wine repository. You might want to delete it, but you should keep it in case you want to sync more module up to this wine version')
+            print(
+                f'The branch {wine_branch_name} was created in your wine repository. You might want to delete it, but you should keep it in case you want to sync more module up to this wine version'
+            )
 
 def main():
     parser = argparse.ArgumentParser()

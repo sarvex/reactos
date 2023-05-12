@@ -272,8 +272,8 @@ def key_objectid_str(objectid, _type):
   if _type == DEV_EXTENT_KEY:
     return str(objectid)
   if _type == QGROUP_RELATION_KEY:
-    return "{}/{}".format(qgroup_level(objectid), qgroup_subvid(objectid))
-  if _type == UUID_KEY_SUBVOL or _type == UUID_KEY_RECEIVED_SUBVOL:
+    return f"{qgroup_level(objectid)}/{qgroup_subvid(objectid)}"
+  if _type in [UUID_KEY_SUBVOL, UUID_KEY_RECEIVED_SUBVOL]:
     return "0x{:0>16x}".format(objectid)
 
   if objectid == ROOT_TREE_OBJECTID and _type == DEV_ITEM_KEY:
@@ -335,33 +335,30 @@ def key_type_str(_type):
 
 
 def key_offset_str(offset, _type):
-  if _type == QGROUP_RELATION_KEY or _type == QGROUP_INFO_KEY or _type == QGROUP_LIMIT_KEY:
-    return "{}/{}".format(qgroup_level(offset), qgroup_subvid(offset))
-  if _type == UUID_KEY_SUBVOL or _type == UUID_KEY_RECEIVED_SUBVOL:
+  if _type in [QGROUP_RELATION_KEY, QGROUP_INFO_KEY, QGROUP_LIMIT_KEY]:
+    return f"{qgroup_level(offset)}/{qgroup_subvid(offset)}"
+  if _type in [UUID_KEY_SUBVOL, UUID_KEY_RECEIVED_SUBVOL]:
     return "0x{:0>16x}".format(offset)
   if _type == ROOT_ITEM_KEY:
     return _key_objectid_str_map.get(offset, str(offset))
-  if offset == ULLONG_MAX:
-    return '-1'
-
-  return str(offset)
+  return '-1' if offset == ULLONG_MAX else str(offset)
 
 
 def flags_str(flags, flags_str_map):
-  ret = []
-  for flag in sorted(flags_str_map.keys()):
-    if flags & flag:
-      ret.append(flags_str_map[flag])
-  if len(ret) == 0:
+  ret = [
+      flags_str_map[flag] for flag in sorted(flags_str_map.keys())
+      if flags & flag
+  ]
+  if not ret:
     ret.append("none")
     return '|'.join(ret)
 
 
 def embedded_text_for_str(text):
   try:
-    return "utf-8 {}".format(text.decode('utf-8'))
+    return f"utf-8 {text.decode('utf-8')}"
   except UnicodeDecodeError:
-   return "raw {}".format(repr(text))
+    return f"raw {repr(text)}"
 
 
 # === Basic structures
@@ -442,9 +439,7 @@ class Key(object):
   self._offset = (self._key & ((1 << 64) - 1))
 
  def __lt__(self, other):
-  if isinstance(other, Key):
-   return self._key < other._key
-  return self._key < other
+   return self._key < other._key if isinstance(other, Key) else self._key < other
 
  def __le__(self, other):
   if isinstance(other, Key):
@@ -462,16 +457,10 @@ class Key(object):
   return self._key >= other
 
  def __gt__(self, other):
-  if isinstance(other, Key):
-   return self._key > other._key
-  return self._key > other
+   return self._key > other._key if isinstance(other, Key) else self._key > other
 
  def __str__(self):
-  return "({} {} {})".format(
-   key_objectid_str(self._objectid, self._type),
-   key_type_str(self._type),
-   key_offset_str(self._offset, self._type),
-  )
+   return f"({key_objectid_str(self._objectid, self._type)} {key_type_str(self._type)} {key_offset_str(self._offset, self._type)})"
 
  def __add__(self, amount):
   new_key = copy.copy(self)
@@ -499,13 +488,7 @@ class InnerKey(Key):
    self.generation = unpacked_data[4]
 
   def __str__(self):
-   return "(inner_key {} {} {} block_num {}, generation {})".format(
-    key_objectid_str(self._objectid, self._type),
-    key_type_str(self._type),
-    key_offset_str(self._offset, self._type),
-    self.block_num,
-    self.generation,
-   )
+    return f"(inner_key {key_objectid_str(self._objectid, self._type)} {key_type_str(self._type)} {key_offset_str(self._offset, self._type)} block_num {self.block_num}, generation {self.generation})"
 
 class LeafKey(Key):
   sstruct = struct.Struct('<QBQLL')
@@ -678,11 +661,11 @@ class Chunk(ItemData):
     super().__init__(key)
     self.setattr_from_key(offset_attr='vaddr')
     self.length, self.owner, self.stripe_len, self.type, self.io_align, \
-      self.io_width, self.sector_size, self.num_stripes, self.sub_stripes = \
-      Chunk.sstruct.unpack_from(data)
+        self.io_width, self.sector_size, self.num_stripes, self.sub_stripes = \
+        Chunk.sstruct.unpack_from(data)
     self.stripes = []
     pos = Chunk.sstruct.size
-    for i in range(self.num_stripes):
+    for _ in range(self.num_stripes):
       next_pos = pos + Stripe.sstruct.size
       self.stripes.append(Stripe(data[pos:next_pos]))
       pos = next_pos
@@ -737,17 +720,18 @@ class InodeRefList(ItemData, collections.abc.MutableSequence):
     self._list.insert(index, value)
 
   def __str__(self):
-    return "inode ref list size {}".format(len(self))
+    return f"inode ref list size {len(self)}"
 
 
 class InodeRef(ItemData):
   sstruct = struct.Struct('<QH')
 
   def __init__(self, key, data):
-   super().__init__(key)
-   self.index, self.name_len = InodeRef.sstruct.unpack_from(data)
-   self.name, = struct.Struct('<{}s'.format(self.name_len)).unpack_from(data, InodeRef.sstruct.size)
-   self._len = InodeRef.sstruct.size + self.name_len
+    super().__init__(key)
+    self.index, self.name_len = InodeRef.sstruct.unpack_from(data)
+    (self.name, ) = struct.Struct(f'<{self.name_len}s').unpack_from(
+        data, InodeRef.sstruct.size)
+    self._len = InodeRef.sstruct.size + self.name_len
 
   @property
   def name_str(self):
@@ -803,17 +787,17 @@ class DirItem(object):
   sstruct = struct.Struct('<' + ''.join([s.format[1:].decode() for s in _dir_item]))
 
   def __init__(self, data, pos):
-   next_pos = pos + DiskKey.sstruct.size
-   self.location = DiskKey(data[pos:next_pos])
-   pos = next_pos
-   self.transid, self.data_len, self.name_len, self.type = \
-     DirItem._dir_item[1].unpack_from(data, pos)
-   pos += DirItem._dir_item[1].size
-   self.name, = struct.Struct('<{}s'.format(self.name_len)).unpack_from(data, pos)
-   pos += self.name_len
-   self.data, = struct.Struct('<{}s'.format(self.data_len)).unpack_from(data, pos)
-   pos += self.data_len
-   self._len = DirItem.sstruct.size + self.name_len + self.data_len
+    next_pos = pos + DiskKey.sstruct.size
+    self.location = DiskKey(data[pos:next_pos])
+    pos = next_pos
+    self.transid, self.data_len, self.name_len, self.type = \
+        DirItem._dir_item[1].unpack_from(data, pos)
+    pos += DirItem._dir_item[1].size
+    self.name, = struct.Struct(f'<{self.name_len}s').unpack_from(data, pos)
+    pos += self.name_len
+    self.data, = struct.Struct(f'<{self.data_len}s').unpack_from(data, pos)
+    pos += self.data_len
+    self._len = DirItem.sstruct.size + self.name_len + self.data_len
 
   @property
   def type_str(self):
@@ -846,9 +830,9 @@ class DirIndex(ItemData):
     self.location = DiskKey(data[:DiskKey.sstruct.size])
     pos = DiskKey.sstruct.size
     self.transid, self.data_len, self.name_len, self.type = \
-      DirItem._dir_item[1].unpack_from(data, pos)
+        DirItem._dir_item[1].unpack_from(data, pos)
     pos += DirItem._dir_item[1].size
-    self.name, = struct.Struct('<{}s'.format(self.name_len)).unpack_from(data, pos)
+    self.name, = struct.Struct(f'<{self.name_len}s').unpack_from(data, pos)
 
   @property
   def type_str(self):
@@ -929,7 +913,7 @@ class ExtentItem(ItemData):
       self.shared_data_refs = []
       while pos < len(data):
         inline_ref_type, inline_ref_offset = \
-          ExtentItem.extent_inline_ref.unpack_from(data, pos)
+            ExtentItem.extent_inline_ref.unpack_from(data, pos)
         if inline_ref_type == EXTENT_DATA_REF_KEY:
           pos += 1
           next_pos = pos + InlineExtentDataRef.sstruct.size
@@ -948,14 +932,15 @@ class ExtentItem(ItemData):
       self.shared_block_refs = []
       while pos < len(data):
         inline_ref_type, inline_ref_offset = \
-          ExtentItem.extent_inline_ref.unpack_from(data, pos)
+            ExtentItem.extent_inline_ref.unpack_from(data, pos)
         if inline_ref_type == TREE_BLOCK_REF_KEY:
           self.tree_block_refs.append(InlineTreeBlockRef(inline_ref_offset))
         elif inline_ref_type == SHARED_BLOCK_REF_KEY:
           self.shared_block_refs.append(InlineSharedBlockRef(inline_ref_offset))
         else:
-          raise Exception("BUG: expected inline TREE_BLOCK_REF or SHARED_BLOCK_REF_KEY "
-                  "but got inline_ref_type {}".format(inline_ref_type))
+          raise Exception(
+              f"BUG: expected inline TREE_BLOCK_REF or SHARED_BLOCK_REF_KEY but got inline_ref_type {inline_ref_type}"
+          )
         pos += ExtentItem.extent_inline_ref.size
 
   def append_extent_data_ref(self, ref):
@@ -1044,7 +1029,7 @@ class TreeBlockRef(ItemData):
     self.setattr_from_key(offset_attr='root')
 
   def __str__(self):
-    return "tree block backref root {}".format(key_objectid_str(self.root, None))
+    return f"tree block backref root {key_objectid_str(self.root, None)}"
 
 
 class InlineTreeBlockRef(TreeBlockRef):
@@ -1052,7 +1037,7 @@ class InlineTreeBlockRef(TreeBlockRef):
     self.root = root
 
   def __str__(self):
-    return "inline tree block backref root {}".format(key_objectid_str(self.root, None))
+    return f"inline tree block backref root {key_objectid_str(self.root, None)}"
 
 
 class SharedBlockRef(ItemData):
@@ -1061,7 +1046,7 @@ class SharedBlockRef(ItemData):
     self.setattr_from_key(offset_attr='parent')
 
   def __str__(self):
-    return "shared block backref parent {}".format(self.parent)
+    return f"shared block backref parent {self.parent}"
 
 
 class InlineSharedBlockRef(SharedBlockRef):
@@ -1069,7 +1054,7 @@ class InlineSharedBlockRef(SharedBlockRef):
     self.parent = parent
 
   def __str__(self):
-   return "inline shared block backref parent {}".format(self.parent)
+    return f"inline shared block backref parent {self.parent}"
 
 # === Main FileSystem class
 
@@ -1274,7 +1259,7 @@ class FileSystem(object):
     print('=================')
 
   def _insert_chunk(self, chunk):
-    if not chunk.logical in self._chunk_map:
+    if chunk.logical not in self._chunk_map:
       cm = dict(self._chunk_map)
       cm[chunk.logical] = chunk
       self._chunk_map = OrderedDict(sorted(cm.items()))

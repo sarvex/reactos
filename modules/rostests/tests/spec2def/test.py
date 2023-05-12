@@ -47,12 +47,6 @@ class TestCase:
         self.result_files = [ResultFile(tmpdir, tmpfile) for tmpfile in os.listdir(tmpdir)]
 
     def verify(self):
-        if False:
-            for result in self.result_files:
-                with open(os.path.join(DATA_DIR, result.filename), 'w') as content:
-                    content.write(result.data)
-            return
-
         if self.returncode != 0:
             print('Failed return code', self.returncode, 'for', self.prefix)
             return
@@ -71,8 +65,8 @@ class TestCase:
                 # Content 100% the same, ignoring empty newlines
                 continue
 
-            exp_name = 'expected/' + exp.filename
-            res_name = 'output/' + res.filename
+            exp_name = f'expected/{exp.filename}'
+            res_name = f'output/{res.filename}'
             exp = exp.data.splitlines()
             res = res.data.splitlines()
             diff = difflib.unified_diff(exp, res, fromfile=exp_name, tofile=res_name, lineterm='')

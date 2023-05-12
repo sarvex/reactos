@@ -35,9 +35,8 @@ def check_file(filename):
     cur_packing = []
     with open (filename, 'rb') as input_file:
         for line_nr, line in enumerate(input_file):
-            res = re.search(rb'#[\s]*include[\s]+[<"]([^[">]+)[">]', line)
-            if res:
-                header = res.group(1).decode('utf-8')
+            if res := re.search(rb'#[\s]*include[\s]+[<"]([^[">]+)[">]', line):
+                header = res[1].decode('utf-8')
                 line_nr += 1    # Line numbers start at 1
                 if header in START_HEADERS:
                     if cur_packing:
